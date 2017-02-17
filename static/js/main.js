@@ -52,7 +52,8 @@ var animCircleBangEndAttr   = {"r": 3, "fill": "#111"};
 
 /* handles */
 var handlesWarningAttr = {"opacity": 0.2};
-var handlesDefaultAttr = {"opacity": 1};
+var handlesDefaultAttr = {"r": 3, "stroke-width": 2};
+var handleHoverInAttr = {"r": 6, "stroke-width": 3};
 
 /* hover hint */
 var hoverCircleAttr   = {fill: "#AAA", stroke: "#aaa"};
@@ -63,46 +64,56 @@ var gridDotAttr       = {"fill": "#777", "stroke-width": 1, "stroke": "#FFF"};
 
 /* --------------------------------- GLOBALS -------------------------------- */
 
-// AUDIO
-Tone.Transport.latencyHint = 'fastest'
+// AUDIO ===============
+Tone.Transport.latencyHint = 'interactive';
 /*  "interactive" (default, prioritizes low latency)
     "playback" (prioritizes sustained playback)
     "balanced" (balances latency and performance)
     "fastest" (lowest latency, might glitch more often)
 */
 var TEMPO = 6;
-var ORIGIN_RADIUS = 15;
 var PLAYING = false;
 var DEFAULT_SYNTH = "Simple";
-var PRESETS = new Presets();
+//var PRESETS = new Presets();
 
-// SCALE
-var ROOT_NOTE = "A3";
+// SCALE ===============
+var DEFAULT_KEY = "A3";
+var DEFAULT_SCALE = "major";
 var NOTE_CHOOSER = note_chooser1;
-var SCALE = teoria.note("a").scale('major');
-var keysList = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
-            "major pentatonic", "minor pentatonic", "chromatic", "blues", "double harmonic",
-            "flamenco", "harmonic minor", "melodic minor", "wholetone"];
+var SCALE = teoria.note(DEFAULT_KEY).scale(DEFAULT_SCALE);
+var ROOT_NOTE = SCALE.tonic.toString();
+var keysList = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", 
+                "locrian", "major pentatonic", "minor pentatonic", "chromatic", 
+                "blues", "double harmonic", "flamenco", "harmonic minor", 
+                "melodic minor", "wholetone"];
 var tonicsList = ["a", "a#", "b", "c", "c#", "d", "d#", "e", "f", "f#", "g", "g#"];
-// GRID
+//var tonicsList = teoria.note("a").scale("chromatic").simple();
+
+// GRID ===============
 var GRID_SIZE = 50;
 var GLOBAL_MARGIN = 5;
 var gridDots = r.set();
 
-// TOOLS: draw, adjust
+// TOOLS ===============
+// draw, adjust
 var CURR_TOOL = "draw";
+var CURR_DRAW_STATE = "ready";
 
-// LINE TO MOUSE
+// LINE TO MOUSE ===============
+var ORIGIN_RADIUS = 15;
 var PREV_ENDPOINT;
 var hoverLine = r.path().attr(hoverLineAttr);
 var hoverCircle = r.circle(0,0,3).attr(hoverCircleAttr);
 
+/*var source = Tone.context;
+console.log (source);
+var rec = new Recorder(source.destination.context);*/
 
 
 
 /* ------------------------------- Shape class ------------------------------ */
 class Shape {
-    constructor(start_freq, synth_name) {
+    constructor(start_freq, synth_name, savedData, id) {
         
         /* ----- Drag ----- */
         this.start = function () {
@@ -191,12 +202,8 @@ class Shape {
             var y = event.clientY - 43;
             var i = this.path.data("i");
             var popup = $("#shape-attr-popup-"+i);
-                        
-            //console.log(popup);
             popup.css({left: x, top: y});
             popup.show();
-
-            //this.path.attr({stroke: "#f00"});
         }
 
         /* ----- Delete ----- */
@@ -212,6 +219,7 @@ class Shape {
             this.included = false;
         }
         
+        /* ----- Mute ----- */
         this.mute = function () {
             this.isMuted = true;
             this.synth.volume.value = -60;
@@ -222,21 +230,25 @@ class Shape {
             this.animCircle.attr(shapeMutedAttr);
 
         }
+        
         this.unmute = function () {
             this.isMuted = false;
             console.log("unmute");
             this.path.attr(shapeDefaultAttr);
             for (var i = this.nodes.length - 1; i >= 0; i--) {
                 this.nodes[i].handle.attr(handlesDefaultAttr);
+                this.nodes[i].handle.attr("opacity", 1);
             }
             this.animCircle.attr(animCircleAttr);
             this.synth.volume.value = this.volume;
         }
+
         /* ======================================= */
         // tone
         this.synth = synth_chooser(synth_name);
         this.volume = -8;        
         this.isMuted = false;
+        this.isMutedFromSolo = false;
 
         // path
         this.path = r.path().attr(shapeDefaultAttr);
@@ -258,6 +270,34 @@ class Shape {
         // animation
         this.animCircle = r.circle(0, 0, 5).attr(animCircleAttr).toFront().hide();
 
+        if (savedData) {
+            var pathList = savedData.pathList;
+            this.start_freq = savedData.start_freq;
+            //update_vol(id, savedData.volume);
+            this.volume = savedData.volume;
+            this.path.attr("stroke-width", volume_to_stroke_width(this.volume));
+            //update_stroke_width(id, volume_to_stroke_width(this.volume));
+            console.log("building from path");
+            console.log(pathList)
+            //var shapeId = this.path.data("id");
+            this.completed = true;
+            
+            var pathString = "M" + pathList[0].x + "," + pathList[0].y
+            var firstNode = new Node(pathList[0].x, pathList[0].y, 1, id);
+            this.nodes.push(firstNode);
+
+            for (var i = 1; i < pathList.length; i++) {
+                pathString += "L" + pathList[i].x + "," + pathList[i].y
+                var newNode = new Node(pathList[i].x, pathList[i].y, i+1, id);
+                this.nodes.push(newNode);
+            }
+            pathString += "Z";
+            this.path.attr("path", pathString);
+            this.path.data("i", id);
+
+            this.path.attr(shapeFilledAttr);
+
+        }
 
         /* ============================================================= */
         /* ======================= PART CALLBACK ======================= */
@@ -267,7 +307,7 @@ class Shape {
             var parentShape = value.parentShape;
             var thisSynth = get_this_synth(parentShape);
 
-            console.log("VALUE", value);
+            //console.log("VALUE", value);
             
             if (parentShape.isMuted) {
                 thisSynth.volume.value = -60;
@@ -281,9 +321,9 @@ class Shape {
             var lengthToMiliseconds = (value.noteDur * 1000).toFixed(9);
             //var duration = (lengthToMiliseconds / 1000).toFixed(12);
             var note = value.noteVal;
-            
-            console.log("DUR:", duration)
-            console.log("TO MIL:", lengthToMiliseconds)
+            console.log("note:", note);
+            //console.log("DUR:", duration)
+            //console.log("TO MIL:", lengthToMiliseconds)
 
             Tone.Draw.schedule(function(){
                 var startX = value.nodeFrom.getX();
@@ -293,7 +333,7 @@ class Shape {
 
                 parentShape.animCircle.attr({cx : startX, cy : startY})
                 parentShape.animCircle.animate({"cx": endX, "cy": endY}, lengthToMiliseconds, function() {
-                    console.log("X,Y:", this.attr("cx"), this.attr("cy"));
+                    //console.log("X,Y:", this.attr("cx"), this.attr("cy"));
                 });
 
                 parentShape.animCircle.animate(animCircleBangStartAttr, 0, "linear", function(){
@@ -313,22 +353,31 @@ class Shape {
         console.log("setting start freq:", freq);
         this.start_freq = freq;
     }
-
     stop () {
-        // TODO
+        this.synth.triggerRelease();
         this.animCircle.hide();
         //this.synth.volume.value = -60;
     }
-    
+
+    render() {
+        this.path = r.path(this.path.toString());
+        console.log("rendering");
+        console.log(this.path);
+        this.path.show();
+    }
+/*<!--\
+--><div class="button-cont solo-button-cont">\
+    <button class="shape-attr-solo" data=""\
+            onclick="solo_shape('+i+')">Solo</button>\
+</div>
+*/
     init_shape_attr_popup(){
         var i = this.path.data("i");
-        //console.log("====>", i);
         var start_freq = this.start_freq;
-        var test = this.delete;
         var popupHtml = '\
             <div class="shape-attr-popup" id="shape-attr-popup-' + i + '">\
                 <!-- <div>\
-                    <span class="hide-details" onclick="">X</span>\
+                    <span class="close-popup" onclick="">X</span>\
                 </div> -->\
                 <div class="section">\
                     <label>Instrument:</label>\
@@ -336,7 +385,7 @@ class Shape {
                         <option value="AM">AM</option>\
                         <option value="FM">FM</option>\
                         <option value="Duo">Duo</option>\
-                        <option value="Poly">Poly</option>\
+                        <option value="Mono">Mono</option>\
                         <option value="Simple">Simple</option>\
                         <option value="Membrane">Membrane</option>\
                     </select>\
@@ -345,23 +394,21 @@ class Shape {
                     <label>Starting Note:</label>\
                     <span class="shape-attr-start-freq">\
                         <span class="start-freq-label" id="start-freq-label-'+i+'">'+start_freq+'</span>\
-                        <button class="arrow arrow-up" onclick="increment_start_freq(1,'+i+')">&#9650;</button>\
-                        <button class="arrow arrow-down" onclick="increment_start_freq(0,'+i+')">&#9660;</button>\
+                        <button class="arrow arrow-up" onclick="increment_start_freq(1,'+i+')"><i class="ion-arrow-up-b"></i></button>\
+                        <button class="arrow arrow-down" onclick="increment_start_freq(0,'+i+')"><i class="ion-arrow-down-b"></i></button>\
                     </span>\
                 </div>\
                 <div class="section">\
                     Volume:\
-                    <input type="range" id="signal-meter"\
-                           value="-6" min="-12" max="0"\
+                    <input type="range" class="signal-meter"\
+                           value="'+this.volume+'" min="-12" max="0"\
                            oninput="update_vol('+i+', this.value)"\
                            onchange="update_vol('+i+', this.value)">\
                 </div>\
                 <div class="section mute-solo">\
-                    <div class="mute-button-cont">\
+                    <div class="button-cont mute-button-cont">\
                         <button class="shape-attr-mute" data=""\
-                                onclick="mute_shape('+i+')"\
-                                onmouseover="mute_hoverin('+i+')"\
-                                onmouseout="mute_hoverout('+i+')">Mute</button>\
+                                onclick="mute_shape('+i+')">Mute</button>\
                     </div>\
                 </div>\
                 <div class="section">\
@@ -371,7 +418,6 @@ class Shape {
                             onmouseout="delete_hoverout('+i+')">Delete Shape</button>\
                 </div>\
             </div>';
-
         $("body").append(popupHtml);
     }
 
@@ -453,7 +499,6 @@ class Shape {
             nodeFrom : nodePrev,
             isFirst : isFirst
         }
-
         return result;
     }
 }
@@ -474,17 +519,20 @@ class Shape {
 /* --------------------------- Vertex Handle class -------------------------- */
 class Node {
     constructor(x, y, i, shapeId) {
-
+        console.log("constructing node:", i);
         // if first node
         if ((i-1) == 0) {
-            this.discattr = {fill: "#000", stroke: "#000", "stroke-width": 1, opacity: 1};
+            this.discattr = {fill: "#000", stroke: "#000", "stroke-width": 1};
             this.isFirst = true;
         } else {
-            this.discattr = {fill: "#eee", stroke: "#000", "stroke-width": 2, opacity: 0};
+            this.discattr = {fill: "#eee", stroke: "#000", "stroke-width": 2};
         }
         
         // handle
-        this.handle = r.circle(x,y,3).attr(this.discattr);
+        this.handle = r.circle(x,y,3).attr(this.discattr).hide();
+        if (this.isFirst) {
+            this.handle.show();
+        }
         this.handle.data("i", i);
         this.handle.data("shapeId", shapeId);
 
@@ -545,8 +593,7 @@ class Node {
         this.hoverIn = function (item) {
             return function (event) {
                 if (CURR_TOOL == "adjust") {
-                    item.attr("r", "5");
-                    item.attr("stroke-width", "3");
+                    item.attr(handleHoverInAttr);
                 }
             };
         };
@@ -554,18 +601,17 @@ class Node {
         this.hoverOut = function (item) {
             return function (event) {
                 if (CURR_TOOL == "adjust") {
-                    item.attr("r", "3");
-                    item.attr("stroke-width", "2");
+                    item.attr(handlesDefaultAttr);
                 };
             };
         };
         
         this.hide = function () {
-            this.handle.attr("opacity", 0);
+            this.handle.hide();
         }
 
         this.show = function () {
-            this.handle.attr("opacity", 1);
+            this.handle.show();
         }
 
         this.getX = function () {
@@ -602,59 +648,40 @@ var ACTIVE_SHAPE = new Shape(ROOT_NOTE, DEFAULT_SYNTH);
 /* -------------------------------------------------------------------------- */
 function play_handler() {
     // TODO
-    PLAYING = true;
-    Tone.Master.mute = false;
-    Tone.Transport.start("+0.1");
+    //$("#disable-overlay").show();
+    console.log(CURR_DRAW_STATE);
+    if (CURR_DRAW_STATE === "ready") {
+        $(".play-stop-toggle").html("<i class='ion-stop'></i>");
+        PLAYING = true;
+        Tone.Master.mute = false;
+        Tone.Transport.start("+0.1");
+    }
 }
 
 function stop_handler(){
     // TODO
+    //$("#disable-overlay").hide();
+    $(".play-stop-toggle").html("<i class='ion-play'></i>");
     PLAYING = false;
-    Tone.Transport.stop();
-    Tone.Master.mute = true;
-
     for (var i = shapesList.length - 1; i >= 0; i--) {
         if (shapesList[i].included) {
             shapesList[i].stop();
         }        
     }
+    Tone.Transport.stop(0);
+    Tone.Master.mute = true;
+    //Tone.Master.dispose();
+
 }
 
 function togglePlayStop () {
     console.log(PLAYING);
     if (PLAYING) { // we stop
         stop_handler();
-        $("#disable-overlay").hide();
-        $(".play-stop-toggle-icon").html("play_arrow");
+
     } else { // we play
         play_handler();
-        $("#disable-overlay").show();
-        $(".play-stop-toggle-icon").html("stop");
     }
-}
-
-function volume_to_stroke_width (vol) {
-    vol = parseInt(vol);
-    if (vol < -10) {
-        return 1;
-    } else if (vol < -5) {
-        return 2;
-    } else {
-        return 3;
-    }
-
-    //return (parseInt(vol)/2) + 6;
-}
-
-function update_vol(i, val){
-    //console.log(val);
-    shapesList[i].volume = val;
-    update_stroke_width(i, volume_to_stroke_width (val));
-}
-
-function update_stroke_width(i, val) {
-    console.log(val);
-    shapesList[i].path.attr("stroke-width", val);
 }
 
 $(document).ready(function() {
@@ -688,23 +715,23 @@ $(document).ready(function() {
     };
 
     // PLAY - toggles play / stop
-    $("#play-stop-toggle").click(function(){
+    $(".play-stop-toggle").click(function(){
         togglePlayStop();
     });
 
     // changes global tempo
-    $("#tempo-slider").on("mouseup", function () {
+    $(".tempo-slider").on("mouseup", function () {
         console.log(this.value);
         set_tempo(this.value * -1);
     })
 
     // changes global musical key 
-    $(document).on('change','#scale-select',function(){
+    $(document).on('change','.scale-select',function(){
         console.log(this.value);
         set_scale(this.value);
     });
 
-    $(document).on('change','#tonic-select',function(){
+    $(document).on('change','.tonic-select',function(){
         console.log(this.value);
         set_tonic(this.value);
     });
@@ -714,7 +741,7 @@ $(document).ready(function() {
         event.stopPropagation();
     });
 
-    $(document).on('change','#signal-meter',function(){
+    $(document).on('change','.signal-meter',function(){
         console.log(this.value);
     });
 
@@ -723,14 +750,16 @@ $(document).ready(function() {
         console.log($(this).attr("data"));
         var i = $(this).attr("data");
         console.log("changing to", this.value);
+        shapesList[i].synth.triggerRelease();
         shapesList[i].synth = synth_chooser(this.value);
     });
 
     // CLEAR - hide tooltips, stop transport, remove all shapes
     $("#clear").click(function(){
         hide_details();
-        Tone.Transport.stop(0);
+        stop_handler();
         for (var i = shapesList.length - 1; i >= 0; i--) {
+            unmute_shape(i);
             shapesList[i].delete();
         }
         r.clear();
@@ -748,6 +777,7 @@ $(document).ready(function() {
         if (CURR_TOOL == "adjust") {
             hoverCircle.hide();
         }
+        select_tool("draw");
     });
     
     /* TOOLS */
@@ -810,7 +840,6 @@ $(document).ready(function() {
         
         if (CURR_TOOL == "draw") {
 
-
             var x = event.pageX - GLOBAL_MARGIN;
             var y = event.pageY - GLOBAL_MARGIN;
             
@@ -825,10 +854,9 @@ $(document).ready(function() {
                 prev_n = ACTIVE_SHAPE.path.attr("path")[ACTIVE_SHAPE.length() - 1];
             }
 
-            //console.log(prev_n);
-
             if (x < (origin_x + ORIGIN_RADIUS) && x > (origin_x - ORIGIN_RADIUS) && 
                 y < (origin_y + ORIGIN_RADIUS) && y > (origin_y - ORIGIN_RADIUS)) {
+                set_draw_state("ready");
                 complete_shape();
             } else {        
                 PREV_ENDPOINT = "M" + x + "," + y;
@@ -838,29 +866,17 @@ $(document).ready(function() {
                 hoverLine.attr("path", moveTo);                
 
                 if (ACTIVE_SHAPE.path.attr("path") === "") { // shape is empty
+                    set_draw_state("drawing");
                     ACTIVE_SHAPE.path.attr("path", moveTo);
-                    //ACTIVE_SHAPE.animCircle.attr({"cx": x, "cy": y});
                     ACTIVE_SHAPE.animCircle.show();
                 } else {
-                //    if (x != prev_n[1] && y != prev_n[2]) { // double click check TODO
-                        ACTIVE_SHAPE.path.attr("path", path_to_string(ACTIVE_SHAPE.path) + lineTo);
-                //    }
+                    ACTIVE_SHAPE.path.attr("path", path_to_string(ACTIVE_SHAPE.path) + lineTo);
                 }
-                //if (x != prev_n[1] && y != prev_n[2]) { // TODO
-                    var newNode = new Node(x, y, ACTIVE_SHAPE.length(), shapesList.length);
-                    ACTIVE_SHAPE.nodes.push(newNode);
-                //}
+                var newNode = new Node(x, y, ACTIVE_SHAPE.length(), shapesList.length);
+                ACTIVE_SHAPE.nodes.push(newNode);
             }
         }
     });
-
-    /*$( "#holder" ).on( "dblclick", function( event ) {
-        console.log(event);
-        if (CURR_TOOL == "draw") {
-            complete_shape();
-        }
-    });*/
-
 });
 
 /* -------------------------------------------------------------------------- */
@@ -889,6 +905,18 @@ function complete_shape(){
     console.log(shapesList);
 }
 
+function set_draw_state(state){
+    if (state === "ready") {
+        $(".controls button").prop('disabled', false);
+        $(".controls input").prop('disabled', false);
+        $(".controls select").prop('disabled', false);
+    } else if (state === "drawing") {
+        $(".controls button").prop('disabled', true);
+        $(".controls input").prop('disabled', true);
+        $(".controls select").prop('disabled', true);
+    }
+    CURR_DRAW_STATE = state;
+}
 function path_to_string(path){
     return path.attr("path").join()
 }
@@ -977,22 +1005,52 @@ function delete_shape (i) {
                             */
 function mute_shape(i) {
     shapesList[i].mute();
+    //unsolo_shape(i);
     var unmuteHtml = '<button class="shape-attr-mute shape-attr-unmute" data=""\
-                            onclick="unmute_shape('+i+')"\
-                            onmouseover="unmute_hoverin('+i+')"\
-                            onmouseout="unmute_hoverout('+i+')">Unmute</button>';
+                            onclick="unmute_shape('+i+')">Unmute</button>';
     $("#shape-attr-popup-"+i+" .mute-button-cont").html(unmuteHtml);
 }
 
 function unmute_shape(i) {
     shapesList[i].unmute();
     var muteHtml = '<button class="shape-attr-mute" data=""\
-                            onclick="mute_shape('+i+')"\
-                            onmouseover="mute_hoverin('+i+')"\
-                            onmouseout="mute_hoverout('+i+')">Mute</button>';
+                            onclick="mute_shape('+i+')">Mute</button>';
     $("#shape-attr-popup-"+i+" .mute-button-cont").html(muteHtml);
 }
+/*
+function solo_shape(id) {
+    unmute_shape(id);
+    for (var i = shapesList.length - 1; i >= 0; i--) {
+        if (i != id) {
+            //unsolo_shape(i);
+            if (shapesList[i].isMuted == false) {
+                shapesList[i].isMutedFromSolo = true;
+                mute_shape(i);
+            }
+        }
+    }
+    //shapesList[i].solo();
+    var unsoloHtml = '<button class="shape-attr-solo shape-attr-unsolo" data=""\
+                            onclick="unsolo_shape('+id+')">Unsolo</button>';
+    $("#shape-attr-popup-"+id+" .solo-button-cont").html(unsoloHtml);
+}
 
+function unsolo_shape(id) {
+    for (var i = shapesList.length - 1; i >= 0; i--) {
+        if (i != id) {
+            //unsolo_shape(i);
+            if (shapesList[i].isMutedFromSolo) {
+                shapesList[i].isMutedFromSolo = false;
+                unmute_shape(i);
+            }
+        }
+    }
+    //shapesList[i].unsolo();
+    var soloHtml = '<button class="shape-attr-solo" data=""\
+                            onclick="solo_shape('+id+')">Solo</button>';
+    $("#shape-attr-popup-"+id+" .solo-button-cont").html(soloHtml);
+}
+*/
 function hide_details () {
     for (var i = shapesList.length - 1; i >= 0; i--) {
         shapesList[i].path.attr(shapeFilledAttr);
@@ -1003,16 +1061,44 @@ function hide_details () {
 function delete_hoverin (i) {
     shapesList[i].path.attr(shapeWarningAttr);
     for (var j = shapesList[i].nodes.length - 1; j >= 0; j--) {
-        shapesList[i].nodes[j].handle.attr(handlesWarningAttr)
+        //shapesList[i].nodes[j].handle.attr(handlesWarningAttr);
+        shapesList[i].nodes[j].handle.hide();
     }
 }
 
 function delete_hoverout (i) {
     shapesList[i].path.attr(shapeSelectedAttr);
     for (var j = shapesList[i].nodes.length - 1; j >= 0; j--) {
-        shapesList[i].nodes[j].handle.attr(handlesDefaultAttr)
+        //shapesList[i].nodes[j].handle.attr(handlesDefaultAttr)
+        shapesList[i].nodes[j].handle.show();
     }
 }
+
+function volume_to_stroke_width (vol) {
+    vol = parseInt(vol);
+    if (vol < -10) {
+        return 1;
+    } else if (vol < -5) {
+        return 2;
+    } else {
+        return 3;
+    }
+
+    //return (parseInt(vol)/2) + 6;
+}
+
+function update_vol(i, val){
+    //console.log(val);
+    shapesList[i].volume = val;
+    shapesList[i].synth.volume.value = val;
+    update_stroke_width(i, volume_to_stroke_width (val));
+}
+
+function update_stroke_width(i, val) {
+    console.log(val);
+    shapesList[i].path.attr("stroke-width", val);
+}
+
 
 function lineDistance( point1, point2 )
 {
@@ -1040,8 +1126,8 @@ function lineDistance( point1, point2 )
 
 
 function indexOfNote(letter, scale) {
-    console.log("finding", letter);
-    console.log("in", scale);
+    //console.log("finding", letter);
+    //console.log("in", scale);
     for (var i = scale.length - 1; i >= 0; i--) {
         if (teoria.note(scale[i]).chroma() === teoria.note(letter).chroma()) {
             console.log("FOUND:", letter, " at index:", i);
@@ -1051,7 +1137,7 @@ function indexOfNote(letter, scale) {
             console.log("NOT FOUND");
         }*/
     }
-    console.log("NOT FOUND");
+    //console.log("NOT FOUND");
 }
 
 function increase_by_scale_degree (note, deg, neg_mult) {
@@ -1066,7 +1152,7 @@ function increase_by_scale_degree (note, deg, neg_mult) {
     var noteLetter = noteVal.slice(0, -1).toLowerCase();
     var noteOctave = parseInt(noteVal.slice(-1));
     
-    console.log ("starting with:", noteLetter, noteOctave, ", moving:", deg);
+    //console.log ("starting with:", noteLetter, noteOctave, ", moving:", deg);
     //console.log("SCALE:", SCALE.simple());
     
     var scaleSimple = SCALE.simple();
@@ -1084,16 +1170,12 @@ function increase_by_scale_degree (note, deg, neg_mult) {
         newNoteIndex += length;
     }
 
-    console.log("newIndex:",newNoteIndex);
-    //var cAbove = teoria.note("c"+(noteOctave+1));
-    //var cBelow = teoria.note("c"+noteOctave);
-
-    //console.log("C ABOVE:", cAbove.midi(), "C BELOW:", cBelow.midi());
+    //console.log("newIndex:",newNoteIndex);
 
     var newNoteObj = teoria.note(scaleSimple[newNoteIndex] + noteOctave);
 
     if (deg > 0 && newNoteObj.midi() < noteObj.midi()) {
-        console.log("up one octave");
+        //console.log("up one octave");
         newNoteObj = teoria.note(scaleSimple[newNoteIndex] + (noteOctave + 1));
     }
 
@@ -1172,6 +1254,7 @@ function increment_start_freq(dir, i){
 }
 
 function change_instrument (i){
+    shapesList[i].synth.triggerRelease();
     shapesList[i].synth = synth_chooser(this.value);
 }
     
@@ -1194,8 +1277,34 @@ function synth_chooser (name) {
         case "Pluck":
             synth = new Tone.PluckSynth();
             break;
-        case "Poly":
-            synth = new Tone.PolySynth();
+        case "Mono":
+            synth =  new Tone.MonoSynth(
+                    {
+                        "portamento": 0.08,
+                        "oscillator": {
+                            "partials": [2, 1, 3, 2, 0.4]
+                        },
+                        "filter": {
+                            "Q": 4,
+                            "type": "lowpass",
+                            "rolloff": -48
+                        },
+                        "envelope": {
+                            "attack": 0.04,
+                            "decay": 0.06,
+                            "sustain": 0.4,
+                            "release": 1
+                        },
+                        "filterEnvelope": {
+                            "attack": 0.01,
+                            "decay": 0.1,
+                            "sustain": 0.6,
+                            "release": 1.5,
+                            "baseFrequency": 50,
+                            "octaves": 3.4
+                        }
+                    }
+                );
             break;
         case "Simple":
             synth = new Tone.Synth();
@@ -1219,7 +1328,7 @@ function init_scale_select(){
     for (var i = 0; i < keysList.length; i++) {
         keySelectHtml +=  "<option value='" + keysList[i].replace(/ /g,'') + "'>" + keysList[i] + "</option>" 
     }
-    $("#scale-select").html(keySelectHtml);
+    $(".scale-select").html(keySelectHtml);
 }
 
 function set_scale(name) {
@@ -1248,7 +1357,7 @@ function init_tonic_select(){
     for (var i = 0; i < tonicsList.length; i++) {
         tonicSelectHtml +=  "<option value='" + tonicsList[i] + "'>" + tonicsList[i] + "</option>" 
     }
-    $("#tonic-select").html(tonicSelectHtml);
+    $(".tonic-select").html(tonicSelectHtml);
 }
 
 /* ============================= */
@@ -1260,4 +1369,60 @@ function reset_all_notes() {
 
 function get_this_synth (shape) {
     return shape.synth;
+}
+
+
+/* ========================================================================== */
+var SAVED_PROJECT = [];
+function project_dump(){
+    SAVED_PROJECT = [];
+    console.log("saving")
+    for (var i = 0; i < shapesList.length ; i++) {
+        var currShape = shapesList[i];
+        if (currShape.included) {
+            var coords = []
+            for (var j = 0; j < currShape.nodes.length; j++) {
+                var p = {
+                    x: currShape.nodes[j].getX(),
+                    y: currShape.nodes[j].getY(),
+                }
+                coords.push(p);
+            }
+            var shapeData = {
+                pathList: coords,
+                start_freq: currShape.start_freq,
+                synth_name: currShape.synth,
+                volume: currShape.volume,
+                isMuted: currShape.ismuted
+            }
+            SAVED_PROJECT.push(shapeData);
+        }
+    }
+    console.log(SAVED_PROJECT);
+    var projname = prompt("name your project");
+    params = {
+        proj_name: projname,
+        proj_data: JSON.stringify(SAVED_PROJECT)
+    };
+
+    $.post("/storeproject", params, function(){
+        alert("saved.");
+    });
+}
+
+function project_load(){
+    var projname = prompt("what project do you want");
+    params = {
+        proj_name: projname
+    };
+    console.log("gonna get now");
+    $.get("/getproject?proj_name=" + projname, function(data){
+        console.log("what");
+        for (var i = 0; i < data.length; i++) {
+            var newShape = new Shape (ROOT_NOTE, DEFAULT_SYNTH, data[i], i);
+            newShape.set_note_values();
+            shapesList.push(newShape);
+        }
+        alert("data loaded.");
+    });
 }

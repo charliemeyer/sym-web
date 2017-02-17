@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="x-ua-compatible" content="ie=edge">
+        <title>{{title}}</title>
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="icon" href="static/img/favicon.ico" type="image/x-icon">
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+        <link rel="stylesheet" href="../static/css/normalize.css">
+        <link rel="stylesheet" href="../static/css/main.css">
+        <script src="static/js/vendor/modernizr-2.8.3.min.js"></script>
+    </head>
+
+    <style type="text/css">
+        body {
+            font-family: 'Inconsolata';
+            font-size: 15px;
+        } 
+
+        table {
+            border-collapse: collapse;
+        }
+
+        td, th {
+            padding: 10px;
+            border-bottom: 1px solid #CCCCCC;
+        }
+
+        th {
+            text-align: left;
+        }
+
+        tbody tr:hover {
+            background: #EEEEEE;
+            cursor: pointer;
+        }
+
+
+    </style>
+    <body>
+        <div style='width:420px; margin: 0 auto;'>
+        <h1 style='text-align: center'>sym list</h1>
+            <table style='width: 420px;'>
+                <thead><tr><th>Project name</th><th style='text-align: right'>Owner</th></tr></thead>
+                <tbody>
+                    {% for proj in projects %}
+                        <tr><td><a href='/getproject?proj_name={{proj.name}}'>{{proj.name}}</a></td> <td style='text-align: right'>({{proj.owner}})</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <script src="static/js/vendor/jquery-1.11.3.min.js"></script>
+    </body>
+</html>
